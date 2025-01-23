@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Moon with Retained Texture</title>
+  <link rel="icon" href="pp0261_1-20363.jpg" type="image/x-icon">
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+    button {
+      display: block;
+      margin: 5px 0;
+      padding: 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .input-box {
+      margin-top: 10px;
+      color: white;
+      font-size: 14px;
+    }
+    .input-container {
+      margin-top: 10px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="alSi">Show AL/Si Overlay</button>
+    <button id="mgSi">Show MG/Si Overlay</button>
+    <button id="caSi">Show CA/Si Overlay</button>
+    <button id="reset">Reset to Default Moon Texture</button>
+
+    <!-- Dynamically generated input fields will appear here -->
+    <div id="alSiInput" class="input-container">
+      <div class="input-box">
+        <label for="alSiLat">Latitude:</label>
+        <input type="number" id="alSiLat" placeholder="Enter Latitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="alSiLon">Longitude:</label>
+        <input type="number" id="alSiLon" placeholder="Enter Longitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="krigedAl">Kriged AL:</label>
+        <input type="number" id="krigedAl" placeholder="Enter Kriged AL" step="any">
+      </div>
+      <button id="addAlSiPoint">Add AL/Si Data Point</button>
+    </div>
+
+    <div id="mgSiInput" class="input-container">
+      <div class="input-box">
+        <label for="mgSiLat">Latitude:</label>
+        <input type="number" id="mgSiLat" placeholder="Enter Latitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="mgSiLon">Longitude:</label>
+        <input type="number" id="mgSiLon" placeholder="Enter Longitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="krigedMg">Kriged MG:</label>
+        <input type="number" id="krigedMg" placeholder="Enter Kriged MG" step="any">
+      </div>
+      <button id="addMgSiPoint">Add MG/Si Data Point</button>
+    </div>
+
+    <div id="caSiInput" class="input-container">
+      <div class="input-box">
+        <label for="caSiLat">Latitude:</label>
+        <input type="number" id="caSiLat" placeholder="Enter Latitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="caSiLon">Longitude:</label>
+        <input type="number" id="caSiLon" placeholder="Enter Longitude" step="any">
+      </div>
+      <div class="input-box">
+        <label for="krigedCa">Kriged CA:</label>
+        <input type="number" id="krigedCa" placeholder="Enter Kriged CA" step="any">
+      </div>
+      <button id="addCaSiPoint">Add CA/Si Data Point</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.127.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.127.0/examples/jsm/controls/OrbitControls.js';
+
+    // Scene, Camera, Renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Moon Setup
+    const moonGeometry = new THREE.SphereGeometry(5, 64, 64);
+
+    // Load Textures
+    const realTexture = new THREE.TextureLoader().load('color_file.png');
+    const alSiTexture = new THREE.TextureLoader().load('al_si.jpg');
+    const mgSiTexture = new THREE.TextureLoader().load('mg_si.jpg');
+    const caSiTexture = new THREE.TextureLoader().load('ca_si.jpg');
+
+    // Shader Material for Texture Blending
+    const moonMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        baseTexture: { value: realTexture }, // The moon texture
+        overlayTexture: { value: null },    // Dynamic overlay texture
+        blendAmount: { value: 0.5 }         // Blending factor (0 = only moon, 1 = only overlay)
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D baseTexture;
+        uniform sampler2D overlayTexture;
+        uniform float blendAmount;
+        varying vec2 vUv;
+
+        void main() {
+          vec4 baseColor = texture2D(baseTexture, vUv);
+          vec4 overlayColor = texture2D(overlayTexture, vUv);
+          gl_FragColor = mix(baseColor, overlayColor, blendAmount);
+        }
+      `,
+    });
+
+    const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+    scene.add(moon);
+
+    // Lighting Setup
+    const light = new THREE.PointLight(0xffffff, 1, 100);
+    light.position.set(10, 10, 10);
+    scene.add(light);
+
+    const ambientLight = new THREE.AmbientLight(0x404040, 1.2);
+    scene.add(ambientLight);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    camera.position.z = 20;
+
+    // Data storage for added points
+    const alSiPoints = [];
+    const mgSiPoints = [];
+    const caSiPoints = [];
+
+    // Function to update moon texture overlay
+    function applyOverlay(texture) {
+      moonMaterial.uniforms.overlayTexture.value = texture;
+      moonMaterial.uniforms.blendAmount.value = 0.5; // Adjust blending
+      moonMaterial.needsUpdate = true;
+    }
+
+    // Reset to the base texture
+    function resetTexture() {
+      moonMaterial.uniforms.overlayTexture.value = null;
+      moonMaterial.uniforms.blendAmount.value = 0.0;
+      moonMaterial.needsUpdate = true;
+    }
+
+    // Add point to the moon for AL/Si, Mg/Si, or Ca/Si
+    function addPoint(lat, lon, value, pointsArray) {
+      const radius = 5; // Moon radius
+      const phi = (90 - lat) * (Math.PI / 180); // Convert latitude to radians
+      const theta = (lon + 180) * (Math.PI / 180); // Convert longitude to radians
+
+      const x = radius * Math.sin(phi) * Math.cos(theta);
+      const y = radius * Math.cos(phi);
+      const z = radius * Math.sin(phi) * Math.sin(theta);
+
+      const geometry = new THREE.SphereGeometry(0.01, 8, 8);
+      const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+      const point = new THREE.Mesh(geometry, material);
+      point.position.set(x, y, z);
+
+      scene.add(point);
+      pointsArray.push(point);
+    }
+
+    // Event listeners for buttons
+    document.getElementById('alSi').addEventListener('click', () => {
+      document.getElementById('alSiInput').style.display = 'block';
+      document.getElementById('mgSiInput').style.display = 'none';
+      document.getElementById('caSiInput').style.display = 'none';
+      applyOverlay(alSiTexture);
+    });
+
+    document.getElementById('mgSi').addEventListener('click', () => {
+      document.getElementById('mgSiInput').style.display = 'block';
+      document.getElementById('alSiInput').style.display = 'none';
+      document.getElementById('caSiInput').style.display = 'none';
+      applyOverlay(mgSiTexture);
+    });
+
+    document.getElementById('caSi').addEventListener('click', () => {
+      document.getElementById('caSiInput').style.display = 'block';
+      document.getElementById('alSiInput').style.display = 'none';
+      document.getElementById('mgSiInput').style.display = 'none';
+      applyOverlay(caSiTexture);
+    });
+
+    document.getElementById('reset').addEventListener('click', () => {
+      resetTexture();
+    });
+
+    // Handle adding points for AL/Si, Mg/Si, and Ca/Si
+    document.getElementById('addAlSiPoint').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('alSiLat').value);
+      const lon = parseFloat(document.getElementById('alSiLon').value);
+      const krigedAl = parseFloat(document.getElementById('krigedAl').value);
+      addPoint(lat, lon, krigedAl, alSiPoints);
+    });
+
+    document.getElementById('addMgSiPoint').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('mgSiLat').value);
+      const lon = parseFloat(document.getElementById('mgSiLon').value);
+      const krigedMg = parseFloat(document.getElementById('krigedMg').value);
+      addPoint(lat, lon, krigedMg, mgSiPoints);
+    });
+
+    document.getElementById('addCaSiPoint').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('caSiLat').value);
+      const lon = parseFloat(document.getElementById('caSiLon').value);
+      const krigedCa = parseFloat(document.getElementById('krigedCa').value);
+      addPoint(lat, lon, krigedCa, caSiPoints);
+    });
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
